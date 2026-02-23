@@ -1,0 +1,14 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "search-claude-history"
+version = "0.1.0"
+description = "Search across Claude Code session history"
+requires-python = ">=3.9"
+license = "MIT"
+
+[project.scripts]
+search-claude-history = "search_claude_history.cli:main"
+sch = "search_claude_history.cli:main"
