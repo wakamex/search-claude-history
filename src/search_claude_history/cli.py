@@ -13,6 +13,7 @@ Usage (via uvx):
 
 import argparse
 import concurrent.futures
+from importlib.metadata import version as pkg_version
 import json
 import mmap
 import os
@@ -408,6 +409,10 @@ def format_role(role):
 def main():
     parser = argparse.ArgumentParser(
         description="Search Claude Code session history",
+    )
+    parser.add_argument(
+        "-V", "--version", action="version",
+        version=f"%(prog)s {pkg_version('search-claude-history')}",
     )
     parser.add_argument("pattern", help="Search pattern (supports regex)")
     parser.add_argument("-p", "--project", help="Filter to project (substring match on dir name)")
