@@ -30,7 +30,19 @@ def _get_version():
         from importlib.metadata import version
         return version("search-claude-history")
     except Exception:
-        return "dev"
+        pass
+    # Fallback: derive from git
+    try:
+        out = subprocess.run(
+            ["git", "describe", "--tags", "--always"],
+            capture_output=True, text=True, timeout=5,
+            cwd=Path(__file__).parent,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return f"0.1+{out.stdout.strip()}"
+    except Exception:
+        pass
+    return "0.1+unknown"
 
 
 # Whether to emit ANSI escapes — resolved at startup
