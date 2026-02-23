@@ -13,7 +13,7 @@ $ sch "git-log-list"
 2 match(es)
 ```
 
-Works out of the box, but fastest with [ripgrep](https://github.com/BurntSushi/ripgrep) installed (`brew install ripgrep` / `apt install ripgrep` / `winget install BurntSushi.ripgrep`).
+Works out of the box, but fastest with [ripgrep](https://github.com/BurntSushi/ripgrep) installed.
 
 ## Install
 
