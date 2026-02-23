@@ -47,18 +47,23 @@ def _get_version():
                 base = tomllib.load(f).get("project", {}).get("version", base)
         except OSError:
             pass
-    git_hash = ""
     try:
         out = subprocess.run(
             ["git", "describe", "--tags", "--always"],
             capture_output=True, text=True, timeout=5,
             cwd=Path(__file__).parent,
         )
-        if out.returncode == 0 and out.stdout.strip():
-            git_hash = out.stdout.strip()
+        if out.returncode == 0:
+            desc = out.stdout.strip()
+            # On a release tag (v0.1.0 or 0.1.0) → clean version
+            if desc in (base, f"v{base}"):
+                return base
+            # Ahead of tag or no tags → append short hash
+            short = desc.rsplit("-", 1)[-1].lstrip("g") if "-" in desc else desc
+            return f"{base}+{short}"
     except Exception:
         pass
-    return f"{base}+{git_hash}" if git_hash else base
+    return base
 
 
 # Whether to emit ANSI escapes — resolved at startup
