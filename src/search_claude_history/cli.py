@@ -1,6 +1,6 @@
 """Search across Claude Code session history for keywords/patterns in messages.
 
-Uses rg for fast matching across JSONL files, then Python for parsing and formatting.
+Uses rg for fast matching when available, falls back to pure Python otherwise.
 
 Usage (via uvx):
     search-claude-history "git-log-list"
@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -214,32 +215,63 @@ def get_timestamp(obj):
     return ""
 
 
+def _find_jsonl_files(project_filter=None):
+    """Walk CLAUDE_DIR for session JSONL files, excluding subagents/."""
+    for dirpath, dirnames, filenames in os.walk(CLAUDE_DIR):
+        # Prune subagents directories
+        dirnames[:] = [d for d in dirnames if d != "subagents"]
+        for fname in filenames:
+            if not fname.endswith(".jsonl"):
+                continue
+            fpath = os.path.join(dirpath, fname)
+            if project_filter:
+                project, _ = parse_session_info(fpath)
+                if project_filter.lower() not in project.lower():
+                    continue
+            yield fpath
+
+
+def _search_python(pattern, project_filter=None):
+    """Pure-Python fallback: scan JSONL files line by line. Slower but no deps."""
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        # Treat as literal string if it's not valid regex
+        regex = re.compile(re.escape(pattern), re.IGNORECASE)
+
+    matches = []
+    for fpath in _find_jsonl_files(project_filter):
+        try:
+            with open(fpath, "r", errors="replace") as f:
+                for lineno, line in enumerate(f, 1):
+                    if regex.search(line):
+                        matches.append((fpath, lineno, line.rstrip("\n")))
+        except OSError:
+            continue
+    return matches
+
+
 # Regex for parsing rg output: filepath:lineno:content
 # Works with Windows drive letters (C:\...) because \d+ constrains the line-number group.
 _RG_LINE_RE = re.compile(r"^(.+?):(\d+):(.*)$", re.DOTALL)
 
 
-def run_rg(pattern, project_filter=None):
-    """Run rg across session JSONL files. Returns list of (filepath, lineno, raw_line)."""
-    search_path = str(CLAUDE_DIR)
+def _search_rg(pattern, project_filter=None):
+    """Use rg for fast searching. Returns None if rg is not available."""
+    if not shutil.which("rg"):
+        return None
+
     cmd = [
         "rg", "--no-heading", "-n", "-i",
         "--glob", "*.jsonl",
         "--glob", "!**/subagents/**",
         pattern,
-        search_path,
+        str(CLAUDE_DIR),
     ]
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    except FileNotFoundError:
-        print(
-            "Error: rg (ripgrep) not found. Install it from https://github.com/BurntSushi/ripgrep",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    except subprocess.TimeoutExpired:
-        print("Error: rg timed out after 60s", file=sys.stderr)
-        sys.exit(1)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
 
     matches = []
     for line in result.stdout.splitlines():
@@ -259,6 +291,16 @@ def run_rg(pattern, project_filter=None):
     return matches
 
 
+def search(pattern, project_filter=None):
+    """Search session files. Uses rg when available, otherwise pure Python."""
+    result = _search_rg(pattern, project_filter)
+    if result is not None:
+        return result
+    print(f"{DIM()}(rg not found, using Python fallback — install ripgrep for faster searches){RESET()}",
+          file=sys.stderr)
+    return _search_python(pattern, project_filter)
+
+
 def format_role(role):
     if role == "user":
         return f"{GREEN()}[user]{RESET()}"
@@ -272,7 +314,7 @@ def main():
     parser = argparse.ArgumentParser(
         description="Search Claude Code session history",
     )
-    parser.add_argument("pattern", help="Search pattern (passed to rg, supports regex)")
+    parser.add_argument("pattern", help="Search pattern (supports regex)")
     parser.add_argument("-p", "--project", help="Filter to project (substring match on dir name)")
     parser.add_argument(
         "-t", "--type",
@@ -301,7 +343,7 @@ def main():
         print(f"Error: {CLAUDE_DIR} not found", file=sys.stderr)
         sys.exit(1)
 
-    matches = run_rg(args.pattern, args.project)
+    matches = search(args.pattern, args.project)
     if not matches:
         print("No matches found.")
         return
