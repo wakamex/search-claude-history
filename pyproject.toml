@@ -9,6 +9,9 @@ description = "Search across Claude Code session history"
 requires-python = ">=3.9"
 license = "MIT"
 
+[project.optional-dependencies]
+hyperscan = ["hyperscan>=0.7"]
+
 [project.scripts]
 search-claude-history = "search_claude_history.cli:main"
 sch = "search_claude_history.cli:main"

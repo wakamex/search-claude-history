@@ -233,8 +233,61 @@ def _find_jsonl_files(project_filter=None):
             yield fpath
 
 
-def _search_file(args):
-    """Search a single file using mmap. Runs in a worker process."""
+def _mmap_extract_lines(mm, size, match_positions):
+    """Given a list of (start, end) byte positions in an mmap, extract (lineno, line_text) for each."""
+    results = []
+    for start, end in match_positions:
+        line_start = mm.rfind(b"\n", 0, start) + 1
+        line_end = mm.find(b"\n", end)
+        if line_end == -1:
+            line_end = size
+        lineno = mm[:line_start].count(b"\n") + 1
+        line_bytes = mm[line_start:line_end]
+        results.append((lineno, line_bytes.decode("utf-8", errors="replace")))
+    return results
+
+
+def _search_file_hs(args):
+    """Search a single file using hyperscan + mmap. Runs in a worker process."""
+    fpath, pattern_str = args
+    import hyperscan as hs
+
+    db = hs.Database()
+    try:
+        db.compile(
+            expressions=[pattern_str.encode("utf-8", errors="replace")],
+            flags=[hs.HS_FLAG_CASELESS | hs.HS_FLAG_SOM_LEFTMOST],
+        )
+    except hs.error:
+        db.compile(
+            expressions=[re.escape(pattern_str).encode("utf-8", errors="replace")],
+            flags=[hs.HS_FLAG_CASELESS | hs.HS_FLAG_SOM_LEFTMOST],
+        )
+
+    positions = []
+
+    def on_match(id, start, end, flags, context):
+        positions.append((start, end))
+
+    matches = []
+    try:
+        with open(fpath, "rb") as f:
+            size = f.seek(0, 2)
+            if size == 0:
+                return matches
+            f.seek(0)
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                db.scan(bytes(mm), match_event_handler=on_match)
+                if positions:
+                    for lineno, line_text in _mmap_extract_lines(mm, size, positions):
+                        matches.append((fpath, lineno, line_text))
+    except OSError:
+        pass
+    return matches
+
+
+def _search_file_re(args):
+    """Search a single file using mmap + re. Runs in a worker process."""
     fpath, pattern_str = args
     try:
         regex_b = re.compile(pattern_str.encode("utf-8", errors="replace"), re.IGNORECASE)
@@ -249,26 +302,36 @@ def _search_file(args):
                 return matches
             f.seek(0)
             with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                for m in regex_b.finditer(mm):
-                    # Find the line boundaries around this match
-                    line_start = mm.rfind(b"\n", 0, m.start()) + 1
-                    line_end = mm.find(b"\n", m.end())
-                    if line_end == -1:
-                        line_end = size
-                    # Count newlines before match to get line number
-                    lineno = mm[:line_start].count(b"\n") + 1
-                    line_bytes = mm[line_start:line_end]
-                    matches.append((fpath, lineno, line_bytes.decode("utf-8", errors="replace")))
+                positions = [(m.start(), m.end()) for m in regex_b.finditer(mm)]
+                if positions:
+                    for lineno, line_text in _mmap_extract_lines(mm, size, positions):
+                        matches.append((fpath, lineno, line_text))
     except OSError:
         pass
     return matches
 
 
+def _has_hyperscan():
+    try:
+        import hyperscan  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def _search_python(pattern, project_filter=None):
-    """Pure-Python fallback: mmap + multiprocess scan. No external deps."""
+    """Python fallback: hyperscan if installed, else mmap+re. Both multiprocessed."""
     files = list(_find_jsonl_files(project_filter))
     if not files:
         return []
+
+    use_hs = _has_hyperscan()
+    worker_fn = _search_file_hs if use_hs else _search_file_re
+    if not use_hs:
+        print(
+            f"{DIM()}(tip: pip install hyperscan for ~4x faster searches){RESET()}",
+            file=sys.stderr,
+        )
 
     work = [(f, pattern) for f in files]
     all_matches = []
@@ -276,10 +339,10 @@ def _search_python(pattern, project_filter=None):
     workers = min(os.cpu_count() or 1, len(files))
     if workers <= 1:
         for w in work:
-            all_matches.extend(_search_file(w))
+            all_matches.extend(worker_fn(w))
     else:
         with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
-            for file_matches in pool.map(_search_file, work, chunksize=4):
+            for file_matches in pool.map(worker_fn, work, chunksize=4):
                 all_matches.extend(file_matches)
 
     return all_matches
@@ -326,12 +389,10 @@ def _search_rg(pattern, project_filter=None):
 
 
 def search(pattern, project_filter=None):
-    """Search session files. Uses rg when available, otherwise pure Python."""
+    """Search session files. Tries rg first, then hyperscan, then mmap+re."""
     result = _search_rg(pattern, project_filter)
     if result is not None:
         return result
-    print(f"{DIM()}(rg not found, using Python fallback — install ripgrep for faster searches){RESET()}",
-          file=sys.stderr)
     return _search_python(pattern, project_filter)
 
 
