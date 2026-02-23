@@ -67,3 +67,5 @@ Searches `~/.claude/projects/` using the fastest available engine:
 | stdlib (mmap + multiprocessing) | 0.64s | nothing |
 
 The tool uses whichever engine is available, in the order above.
+
+Respects `CLAUDE_CONFIG_DIR` if set, otherwise defaults to `~/.claude/`.
