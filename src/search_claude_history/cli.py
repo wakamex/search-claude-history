@@ -12,7 +12,9 @@ Usage (via uvx):
 """
 
 import argparse
+import concurrent.futures
 import json
+import mmap
 import os
 import re
 import shutil
@@ -231,24 +233,56 @@ def _find_jsonl_files(project_filter=None):
             yield fpath
 
 
-def _search_python(pattern, project_filter=None):
-    """Pure-Python fallback: scan JSONL files line by line. Slower but no deps."""
+def _search_file(args):
+    """Search a single file using mmap. Runs in a worker process."""
+    fpath, pattern_str = args
     try:
-        regex = re.compile(pattern, re.IGNORECASE)
+        regex_b = re.compile(pattern_str.encode("utf-8", errors="replace"), re.IGNORECASE)
     except re.error:
-        # Treat as literal string if it's not valid regex
-        regex = re.compile(re.escape(pattern), re.IGNORECASE)
+        regex_b = re.compile(re.escape(pattern_str).encode("utf-8", errors="replace"), re.IGNORECASE)
 
     matches = []
-    for fpath in _find_jsonl_files(project_filter):
-        try:
-            with open(fpath, "r", errors="replace") as f:
-                for lineno, line in enumerate(f, 1):
-                    if regex.search(line):
-                        matches.append((fpath, lineno, line.rstrip("\n")))
-        except OSError:
-            continue
+    try:
+        with open(fpath, "rb") as f:
+            size = f.seek(0, 2)
+            if size == 0:
+                return matches
+            f.seek(0)
+            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+                for m in regex_b.finditer(mm):
+                    # Find the line boundaries around this match
+                    line_start = mm.rfind(b"\n", 0, m.start()) + 1
+                    line_end = mm.find(b"\n", m.end())
+                    if line_end == -1:
+                        line_end = size
+                    # Count newlines before match to get line number
+                    lineno = mm[:line_start].count(b"\n") + 1
+                    line_bytes = mm[line_start:line_end]
+                    matches.append((fpath, lineno, line_bytes.decode("utf-8", errors="replace")))
+    except OSError:
+        pass
     return matches
+
+
+def _search_python(pattern, project_filter=None):
+    """Pure-Python fallback: mmap + multiprocess scan. No external deps."""
+    files = list(_find_jsonl_files(project_filter))
+    if not files:
+        return []
+
+    work = [(f, pattern) for f in files]
+    all_matches = []
+
+    workers = min(os.cpu_count() or 1, len(files))
+    if workers <= 1:
+        for w in work:
+            all_matches.extend(_search_file(w))
+    else:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as pool:
+            for file_matches in pool.map(_search_file, work, chunksize=4):
+                all_matches.extend(file_matches)
+
+    return all_matches
 
 
 # Regex for parsing rg output: filepath:lineno:content
