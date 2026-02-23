@@ -63,7 +63,7 @@ Searches `~/.claude/projects/` using the fastest available engine:
 | Engine | 0.45 GB | Requires |
 |--------|---------|----------|
 | [ripgrep](https://github.com/BurntSushi/ripgrep) | 0.13s | `rg` on PATH |
-| [hyperscan](https://pypi.org/project/hyperscan/) | 0.15s | `pip install search-claude-history[hyperscan]` |
+| [hyperscan](https://pypi.org/project/hyperscan/) | 0.15s | install with `[hyperscan]` extra |
 | stdlib (mmap + multiprocessing) | 0.64s | nothing |
 
 The tool uses whichever engine is available, in the order above.
