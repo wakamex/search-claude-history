@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "search-claude-history"
 version = "0.1.0"
 description = "Search across Claude Code session history"
+readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 
