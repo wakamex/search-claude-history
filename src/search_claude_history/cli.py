@@ -31,7 +31,23 @@ def _get_version():
         return version("search-claude-history")
     except Exception:
         pass
-    # Fallback: derive from git
+    # Fallback: read version from pyproject.toml + git hash
+    base = "0.0.0"
+    try:
+        import tomllib
+    except ImportError:
+        try:
+            import tomli as tomllib
+        except ImportError:
+            tomllib = None
+    if tomllib:
+        toml_path = Path(__file__).resolve().parent.parent.parent / "pyproject.toml"
+        try:
+            with open(toml_path, "rb") as f:
+                base = tomllib.load(f).get("project", {}).get("version", base)
+        except OSError:
+            pass
+    git_hash = ""
     try:
         out = subprocess.run(
             ["git", "describe", "--tags", "--always"],
@@ -39,10 +55,10 @@ def _get_version():
             cwd=Path(__file__).parent,
         )
         if out.returncode == 0 and out.stdout.strip():
-            return f"0.1+{out.stdout.strip()}"
+            git_hash = out.stdout.strip()
     except Exception:
         pass
-    return "0.1+unknown"
+    return f"{base}+{git_hash}" if git_hash else base
 
 
 # Whether to emit ANSI escapes — resolved at startup
