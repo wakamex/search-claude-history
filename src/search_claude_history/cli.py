@@ -13,7 +13,6 @@ Usage (via uvx):
 
 import argparse
 import concurrent.futures
-from importlib.metadata import version as pkg_version
 import json
 import mmap
 import os
@@ -23,7 +22,16 @@ import subprocess
 import sys
 from pathlib import Path
 
-CLAUDE_DIR = Path.home() / ".claude" / "projects"
+CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "projects"
+
+
+def _get_version():
+    try:
+        from importlib.metadata import version
+        return version("search-claude-history")
+    except Exception:
+        return "dev"
+
 
 # Whether to emit ANSI escapes — resolved at startup
 _use_color = True
@@ -412,7 +420,7 @@ def main():
     )
     parser.add_argument(
         "-V", "--version", action="version",
-        version=f"%(prog)s {pkg_version('search-claude-history')}",
+        version=f"%(prog)s {_get_version()}",
     )
     parser.add_argument("pattern", help="Search pattern (supports regex)")
     parser.add_argument("-p", "--project", help="Filter to project (substring match on dir name)")
