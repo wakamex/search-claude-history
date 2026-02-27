@@ -69,3 +69,28 @@ Searches `~/.claude/projects/` using the fastest available engine:
 The tool uses whichever engine is available, in the order above.
 
 Respects `CLAUDE_CONFIG_DIR` if set, otherwise defaults to `~/.claude/`.
+
+## Claude Code Skill
+
+This tool can also be installed as a [Claude Code skill](https://docs.anthropic.com/en/docs/claude-code/skills) to help Claude automatically search conversation history when you reference past work.
+
+### Install as Skill
+
+```bash
+mkdir -p ~/.claude/skills/search-history
+curl -o ~/.claude/skills/search-history/SKILL.md https://raw.githubusercontent.com/wakamex/search-claude-history/main/skill/SKILL.md
+```
+
+Or manually download [`SKILL.md`](skill/SKILL.md) into `~/.claude/skills/search-history/`.
+
+**Note:** The skill works with or without installing the tool. If `sch` is not installed, Claude will use `uvx search-claude-history` (requires [uv](https://docs.astral.sh/uv/)).
+
+### How It Works
+
+Once installed, Claude will automatically use the skill when you:
+- Reference past work ("a few days ago", "last week", "previously")
+- Ask about prior conversations or decisions
+- Want to find when something was discussed
+- Need to recall specific commands or errors from earlier sessions
+
+The skill teaches Claude how to construct effective `sch` queries with appropriate patterns, context flags, and filtering options.
