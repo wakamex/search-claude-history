@@ -4,11 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "search-claude-history"
-version = "0.1.0"
+version = "0.1.1"
 description = "Search across Claude Code session history"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
+
+[project.urls]
+Homepage = "https://github.com/wakamex/search-claude-history"
+Source = "https://github.com/wakamex/search-claude-history"
 
 [project.optional-dependencies]
 hyperscan = ["hyperscan>=0.7"]
