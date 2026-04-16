@@ -43,6 +43,8 @@ sch <pattern> [options]
 | `-A N` | Show N messages after each match |
 | `-B N` | Show N messages before each match |
 | `-C`, `--context` | Chars of text context around match (default 200) |
+| `--since TIME` | Only messages at/after TIME (ISO 8601 or relative: `30m`, `2h`, `1d`, `1w`) |
+| `--until TIME` | Only messages at/before TIME (same formats as `--since`) |
 | `--tools` | Include tool_use/tool_result messages (hidden by default) |
 | `--no-color` | Disable colored output |
 
@@ -54,6 +56,8 @@ sch "TypeError" --type assistant          # only assistant messages
 sch "deployment" -p myproject             # filter to a project
 sch "refactor" -B 1 -A 1                 # show surrounding messages
 sch "SELECT.*FROM" --tools               # search tool calls too
+sch "deploy" --since 1w                   # only the last week
+sch "error" --since 2026-04-01 --until 2026-04-10
 ```
 
 ## Performance

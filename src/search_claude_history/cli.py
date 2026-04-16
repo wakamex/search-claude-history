@@ -20,6 +20,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 CLAUDE_DIR = Path(os.environ.get("CLAUDE_CONFIG_DIR", Path.home() / ".claude")) / "projects"
@@ -259,8 +260,52 @@ def get_timestamp(obj):
     return ""
 
 
-def _find_jsonl_files(project_filter=None):
-    """Walk CLAUDE_DIR for session JSONL files, excluding subagents/."""
+_REL_TIME_RE = re.compile(r"^(\d+)\s*([mhdw])$")
+
+
+def _parse_time_arg(s):
+    """Parse --since/--until value: relative (30m/2h/1d/1w) or ISO 8601. Returns aware UTC datetime."""
+    s = s.strip()
+    m = _REL_TIME_RE.match(s)
+    if m:
+        n, unit = int(m.group(1)), m.group(2)
+        delta = {
+            "m": timedelta(minutes=n),
+            "h": timedelta(hours=n),
+            "d": timedelta(days=n),
+            "w": timedelta(weeks=n),
+        }[unit]
+        return datetime.now(timezone.utc) - delta
+    iso = s[:-1] + "+00:00" if s.endswith("Z") else s
+    try:
+        dt = datetime.fromisoformat(iso)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(
+            f"invalid time {s!r}: use ISO 8601 (e.g. 2026-04-01) or relative (30m, 2h, 1d, 1w)"
+        ) from e
+    if dt.tzinfo is None:
+        dt = dt.astimezone()  # interpret naive input as local time
+    return dt.astimezone(timezone.utc)
+
+
+def _parse_iso_ts(ts):
+    """Parse a JSONL timestamp string to aware UTC datetime, or None."""
+    if not ts:
+        return None
+    iso = ts[:-1] + "+00:00" if ts.endswith("Z") else ts
+    try:
+        return datetime.fromisoformat(iso).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _find_jsonl_files(project_filter=None, since=None):
+    """Walk CLAUDE_DIR for session JSONL files, excluding subagents/.
+
+    If `since` (aware UTC datetime) is given, skip files whose mtime predates it —
+    every line in such files was written before `since`, so none can match.
+    """
+    since_ts = since.timestamp() if since else None
     for dirpath, dirnames, filenames in os.walk(CLAUDE_DIR):
         # Prune subagents directories
         dirnames[:] = [d for d in dirnames if d != "subagents"]
@@ -271,6 +316,12 @@ def _find_jsonl_files(project_filter=None):
             if project_filter:
                 project, _ = parse_session_info(fpath)
                 if project_filter.lower() not in project.lower():
+                    continue
+            if since_ts is not None:
+                try:
+                    if os.path.getmtime(fpath) < since_ts:
+                        continue
+                except OSError:
                     continue
             yield fpath
 
@@ -361,9 +412,9 @@ def _has_hyperscan():
         return False
 
 
-def _search_python(pattern, project_filter=None):
+def _search_python(pattern, project_filter=None, since=None):
     """Python fallback: hyperscan if installed, else mmap+re. Both multiprocessed."""
-    files = list(_find_jsonl_files(project_filter))
+    files = list(_find_jsonl_files(project_filter, since=since))
     if not files:
         return []
 
@@ -395,7 +446,7 @@ def _search_python(pattern, project_filter=None):
 _RG_LINE_RE = re.compile(r"^(.+?):(\d+):(.*)$", re.DOTALL)
 
 
-def _search_rg(pattern, project_filter=None):
+def _search_rg(pattern, project_filter=None, since=None):
     """Use rg for fast searching. Returns None if rg is not available."""
     if not shutil.which("rg"):
         return None
@@ -412,6 +463,9 @@ def _search_rg(pattern, project_filter=None):
     except (subprocess.TimeoutExpired, OSError):
         return None
 
+    since_ts = since.timestamp() if since else None
+    mtime_cache = {}
+
     matches = []
     for line in result.stdout.splitlines():
         m = _RG_LINE_RE.match(line)
@@ -425,17 +479,28 @@ def _search_rg(pattern, project_filter=None):
             if project_filter.lower() not in project.lower():
                 continue
 
+        if since_ts is not None:
+            mt = mtime_cache.get(filepath)
+            if mt is None:
+                try:
+                    mt = os.path.getmtime(filepath)
+                except OSError:
+                    mt = 0.0
+                mtime_cache[filepath] = mt
+            if mt < since_ts:
+                continue
+
         matches.append((filepath, lineno, content))
 
     return matches
 
 
-def search(pattern, project_filter=None):
+def search(pattern, project_filter=None, since=None):
     """Search session files. Tries rg first, then hyperscan, then mmap+re."""
-    result = _search_rg(pattern, project_filter)
+    result = _search_rg(pattern, project_filter, since=since)
     if result is not None:
         return result
-    return _search_python(pattern, project_filter)
+    return _search_python(pattern, project_filter, since=since)
 
 
 def format_role(role):
@@ -476,6 +541,14 @@ def main():
         "--no-color", action="store_true",
         help="Disable colored output",
     )
+    parser.add_argument(
+        "--since", type=_parse_time_arg, metavar="TIME",
+        help="Only messages at/after TIME (ISO 8601 or relative: 30m, 2h, 1d, 1w)",
+    )
+    parser.add_argument(
+        "--until", type=_parse_time_arg, metavar="TIME",
+        help="Only messages at/before TIME (ISO 8601 or relative)",
+    )
     args = parser.parse_args()
 
     _init_color(force_no_color=args.no_color)
@@ -484,7 +557,7 @@ def main():
         print(f"Error: {CLAUDE_DIR} not found", file=sys.stderr)
         sys.exit(1)
 
-    matches = search(args.pattern, args.project)
+    matches = search(args.pattern, args.project, since=args.since)
     if not matches:
         print("No matches found.")
         return
@@ -512,6 +585,15 @@ def main():
             continue
         if args.type and role != args.type:
             continue
+
+        if args.since or args.until:
+            ts_dt = _parse_iso_ts(obj.get("timestamp", ""))
+            if ts_dt is None:
+                continue  # no timestamp — can't confirm it falls in window
+            if args.since and ts_dt < args.since:
+                continue
+            if args.until and ts_dt > args.until:
+                continue
 
         # Surrounding context lines
         before_lines = []

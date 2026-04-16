@@ -57,6 +57,8 @@ sch [OPTIONS] PATTERN
 - `-A N` — Show N messages after match
 - `-B N` — Show N messages before match
 - `-C CHARS` — Show CHARS of text context around match (default 200)
+- `--since TIME` — Only messages at/after TIME (ISO 8601 like `2026-04-01`, or relative: `30m`, `2h`, `1d`, `1w`)
+- `--until TIME` — Only messages at/before TIME (same formats as `--since`)
 - `--tools` — Include tool_use/tool_result messages (skipped by default)
 - `--no-color` — Disable colored output
 
@@ -115,11 +117,14 @@ sch "redis|Redis" -A 2
 
 **User says:** "What did we work on last Tuesday?"
 
-Combine date context from the conversation with content patterns:
+Use `--since`/`--until` to bound the window — relative (`1w`, `3d`, `2h`) or ISO dates:
 
 ```bash
-sch "benchmark|test|deploy" -p project -A 5 | grep "2026-02-25"
+sch "benchmark|test|deploy" -p project --since 1w -A 5
+sch "error" --since 2026-04-08 --until 2026-04-09   # one specific day
 ```
+
+Prefer this over piping through `grep "<date>"`: the match timestamp drives the filter, so results stay correctly dated even when the rendered header is truncated.
 
 ## Best Practices
 
