@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "search-claude-history"
-version = "0.1.2"
+version = "0.1.3"
 description = "Search across Claude Code session history"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -18,5 +18,8 @@ Source = "https://github.com/wakamex/search-claude-history"
 hyperscan = ["hyperscan>=0.7"]
 
 [project.scripts]
-search-claude-history = "search_claude_history.cli:main"
-sch = "search_claude_history.cli:main"
+search-claude-history = "_search_claude_history_entry:main"
+sch = "_search_claude_history_entry:main"
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/_search_claude_history_entry.py" = "_search_claude_history_entry.py"
