@@ -1,18 +1,29 @@
 name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
+  push:
+    tags: ["v*"]
 
 permissions:
-  id-token: write
+  contents: read
 
 jobs:
+  validate:
+    uses: wakamex/release-actions/.github/workflows/python-validation.yml@v1
+
   publish:
+    needs: validate
     runs-on: ubuntu-latest
     environment: pypi
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - run: uv build
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: actions/checkout@v7.0.1
+      - uses: wakamex/release-actions/pypi-publish@v1
+
+  github-release:
+    needs: publish
+    permissions:
+      contents: write
+    uses: wakamex/release-actions/.github/workflows/github-release.yml@v1
